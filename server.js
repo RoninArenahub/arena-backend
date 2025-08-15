@@ -1,19 +1,16 @@
 // server.js — ArenaHub Backend
-// Supporte wallet + guest, plusieurs leaderboards
+// Supporte plusieurs jeux via des endpoints dédiés
 
 const express = require('express');
-const { verifyMessage } = require('ethers');
 
 const app = express();
 
-// === Middleware CORS (autorise ton frontend) ===
+// === Middleware CORS ===
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', 'https://roninarenahub.netlify.app');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
   next();
 });
 
@@ -27,32 +24,36 @@ app.get('/', (req, res) => {
   res.json({ status: 'ArenaHub Backend is running' });
 });
 
-// === Route: Submit Score (wallet + guest) ===
-app.post('/submit-score', (req, res) => {
+// === Route: Submit Score for Roninoid ===
+app.post('/submit-score-roninoid', (req, res) => {
   const { address, signature, playerName, score, timestamp } = req.body;
 
-  // === Cas 1 : Mode Wallet (avec signature) ===
-  if (address && signature && score !== undefined) {
-    if (typeof score !== 'number' || score < 0) {
-      return res.status(400).json({ success: false, error: "Invalid score" });
-    }
+  if (typeof score !== 'number' || score < 0) {
+    return res.status(400).json({ success: false, error: "Invalid score" });
+  }
 
-    const message = `Submit score: ${score} at ${timestamp}`;
+  // === Mode Wallet ===
+  if (address && signature) {
     try {
-      const recovered = verifyMessage(message, signature);
+      const message = `Submit score: ${score} at ${timestamp}`;
+      const recovered = ethers.verifyMessage(message, signature);
       if (recovered.toLowerCase() !== address.toLowerCase()) {
         return res.status(401).json({ success: false, error: "Invalid signature" });
       }
 
-      const entry = {
+      scores.push({
+        game: 'roninoid',
         type: 'wallet',
         address,
         playerName: playerName || 'Anonymous',
         score,
         timestamp
-      };
-      scores.push(entry);
-      const rank = scores.sort((a, b) => b.score - a.score).findIndex(s => s.address === address) + 1;
+      });
+
+      const rank = scores
+        .filter(s => s.game === 'roninoid')
+        .sort((a, b) => b.score - a.score)
+        .findIndex(s => s.address === address) + 1;
 
       return res.json({ success: true, rank });
     } catch (err) {
@@ -60,30 +61,25 @@ app.post('/submit-score', (req, res) => {
     }
   }
 
-  // === Cas 2 : Mode Guest (seulement playerName) ===
-  if (!address && playerName && score !== undefined) {
-    if (typeof score !== 'number' || score < 0) {
-      return res.status(400).json({ success: false, error: "Invalid score" });
-    }
-
-    const entry = {
+  // === Mode Guest ===
+  if (playerName) {
+    scores.push({
+      game: 'roninoid',
       type: 'guest',
       playerName,
       score,
       timestamp: Date.now()
-    };
-    scores.push(entry);
-
+    });
     return res.json({ success: true });
   }
 
-  // === Cas 3 : Données manquantes ===
   return res.status(400).json({ success: false, error: "Missing required fields" });
 });
 
-// === Route: Leaderboard (ex: Roninoid) ===
+// === Route: Leaderboard for Roninoid ===
 app.get('/leaderboard/roninoid', (req, res) => {
   const top = scores
+    .filter(s => s.game === 'roninoid')
     .sort((a, b) => b.score - a.score)
     .slice(0, 100)
     .map((s, i) => ({
@@ -94,11 +90,6 @@ app.get('/leaderboard/roninoid', (req, res) => {
     }));
 
   res.json({ success: true, leaderboard: top });
-});
-
-// === Route: Exemple pour futur jeu (ex: Catch the Dot) ===
-app.get('/leaderboard/catch-the-dot', (req, res) => {
-  res.json({ success: true, leaderboard: [] }); // Vide pour l'instant
 });
 
 // === Démarrage ===
