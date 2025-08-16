@@ -1,7 +1,5 @@
-// server.js — ArenaHub Backend with PostgreSQL
-// Ajoute une table admin_log pour enregistrer les resets
-
-console.log("🚀 Démarrage du serveur...");
+// server.js — ArenaHub Backend
+// Backend Node.js pour Roninoid avec PostgreSQL
 
 const express = require('express');
 const { Client } = require('pg');
@@ -22,45 +20,19 @@ app.use(express.json());
 
 // === Connexion à PostgreSQL ===
 const client = new Client({
-  connectionString: process.env.DATABASE_URL || 'postgresql://arena_db_22gu_user:tuwcyo7kaqzyiPSojGXt1r1ieO5rtyDU@dpg-d2g12hndiees73cucvfg-a.singapore-postgres.render.com/arena_db_22gu',
+  connectionString: process.env.DATABASE_URL,
   ssl: {
     rejectUnauthorized: false
   }
 });
 
 client.connect()
-  .then(() => console.log('✅ Connecté à PostgreSQL'))
-  .catch(err => console.error('⚠️ Échec de connexion (non bloquant):', err.message));
+  .catch(err => console.error('⚠️ DB: Échec de connexion (non bloquant)', err.message));
 
-// === Crée la table des scores si elle n’existe pas ===
-const createScoresTable = `
-  CREATE TABLE IF NOT EXISTS roninoid_scores (
-    id SERIAL PRIMARY KEY,
-    game TEXT,
-    type TEXT,
-    player_name TEXT,
-    address TEXT,
-    score INTEGER,
-    timestamp BIGINT
-  );
-`;
-client.query(createScoresTable)
-  .then(() => console.log('✅ Table roninoid_scores prête'))
-  .catch(err => console.error('❌ Erreur création table scores:', err));
-
-// === Crée la table admin_log si elle n’existe pas ===
-const createLogTable = `
-  CREATE TABLE IF NOT EXISTS admin_log (
-    id SERIAL PRIMARY KEY,
-    action TEXT,
-    game TEXT,
-    timestamp BIGINT,
-    admin_name TEXT DEFAULT 'admin'
-  );
-`;
-client.query(createLogTable)
-  .then(() => console.log('✅ Table admin_log prête'))
-  .catch(err => console.error('❌ Erreur création table admin_log:', err));
+// === Route: Health check ===
+app.get('/', (req, res) => {
+  res.json({ status: 'ArenaHub Backend is running' });
+});
 
 // === Route: Submit Score for Roninoid ===
 app.post('/submit-score-roninoid', async (req, res) => {
@@ -98,7 +70,6 @@ app.post('/submit-score-roninoid', async (req, res) => {
 
       return res.json({ success: true, rank });
     } catch (err) {
-      console.error("Erreur en mode Wallet:", err);
       return res.status(400).json({ success: false, error: "Invalid signature" });
     }
   }
@@ -138,7 +109,6 @@ app.get('/leaderboard/roninoid', async (req, res) => {
 
     res.json({ success: true, leaderboard });
   } catch (err) {
-    console.error("Erreur lors du chargement du leaderboard", err);
     res.status(500).json({ success: false, error: "Server error" });
   }
 });
@@ -159,23 +129,16 @@ app.post('/admin/reset-roninoid', async (req, res) => {
 
   try {
     await client.query('BEGIN');
-
-    // Supprime les scores
     await client.query('DELETE FROM roninoid_scores WHERE game = $1', ['roninoid']);
-
-    // Enregistre l'action
     await client.query(
       'INSERT INTO admin_log (action, game, timestamp) VALUES ($1, $2, $3)',
       ['reset', 'roninoid', now]
     );
-
     await client.query('COMMIT');
 
-    console.log('✅ [ADMIN] Roninoid scores reset at', new Date(now).toISOString());
     return res.json({ success: true, message: 'Scores reset successfully', resetAt: now });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('❌ [ADMIN] Failed to reset:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
@@ -191,7 +154,8 @@ app.get('/admin/reset-info/:game', async (req, res) => {
     );
 
     if (result.rows.length > 0) {
-      const lastReset = new Date(result.rows[0].timestamp).toLocaleString('en-US', {
+      const timestamp = parseInt(result.rows[0].timestamp, 10);
+      const lastReset = new Date(timestamp).toLocaleString('en-US', {
         timeZone: 'UTC',
         year: 'numeric',
         month: 'short',
@@ -200,12 +164,11 @@ app.get('/admin/reset-info/:game', async (req, res) => {
         minute: '2-digit',
         second: '2-digit'
       });
-      return res.json({ success: true, resetAt: result.rows[0].timestamp, formatted: lastReset });
+      return res.json({ success: true, resetAt: timestamp, formatted: lastReset });
     } else {
       return res.json({ success: true, resetAt: null, formatted: 'Never reset' });
     }
   } catch (err) {
-    console.error('Error fetching reset info:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
