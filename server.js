@@ -1,5 +1,5 @@
-// server.js — ArenaHub Backend
-// Affiche nom + adresse seulement pour les wallets
+// server.js — ArenaHub Backend with PostgreSQL
+// Route admin pour reset les scores de Roninoid
 
 console.log("🚀 Démarrage du serveur...");
 
@@ -32,7 +32,7 @@ client.connect()
   .then(() => console.log('✅ Connecté à PostgreSQL'))
   .catch(err => console.error('⚠️ Échec de connexion (non bloquant):', err.message));
 
-// === Crée la table ===
+// === Crée la table si elle n’existe pas ===
 const createTableQuery = `
   CREATE TABLE IF NOT EXISTS roninoid_scores (
     id SERIAL PRIMARY KEY,
@@ -131,6 +131,28 @@ app.get('/leaderboard/roninoid', async (req, res) => {
   } catch (err) {
     console.error("Erreur lors du chargement du leaderboard", err);
     res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+// === Route: Admin Reset Roninoid Scores ===
+app.post('/admin/reset-roninoid', async (req, res) => {
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ success: false, error: "Password required" });
+  }
+
+  if (password !== process.env.ADMIN_PASSWORD) {
+    return res.status(401).json({ success: false, error: "Invalid password" });
+  }
+
+  try {
+    await client.query('DELETE FROM roninoid_scores WHERE game = $1', ['roninoid']);
+    console.log('✅ [ADMIN] Scores Roninoid réinitialisés');
+    return res.json({ success: true, message: 'Scores reset successfully' });
+  } catch (err) {
+    console.error('❌ [ADMIN] Échec de réinitialisation:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
 
