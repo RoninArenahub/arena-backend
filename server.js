@@ -1,5 +1,5 @@
 // server.js — ArenaHub Backend with PostgreSQL
-// Route admin pour reset les scores de Roninoid
+// Ajoute une table admin_log pour enregistrer les resets
 
 console.log("🚀 Démarrage du serveur...");
 
@@ -32,8 +32,8 @@ client.connect()
   .then(() => console.log('✅ Connecté à PostgreSQL'))
   .catch(err => console.error('⚠️ Échec de connexion (non bloquant):', err.message));
 
-// === Crée la table si elle n’existe pas ===
-const createTableQuery = `
+// === Crée la table des scores si elle n’existe pas ===
+const createScoresTable = `
   CREATE TABLE IF NOT EXISTS roninoid_scores (
     id SERIAL PRIMARY KEY,
     game TEXT,
@@ -44,14 +44,23 @@ const createTableQuery = `
     timestamp BIGINT
   );
 `;
-client.query(createTableQuery)
+client.query(createScoresTable)
   .then(() => console.log('✅ Table roninoid_scores prête'))
-  .catch(err => console.error('❌ Erreur création table:', err));
+  .catch(err => console.error('❌ Erreur création table scores:', err));
 
-// === Route: Health check ===
-app.get('/', (req, res) => {
-  res.json({ status: 'ArenaHub Backend is running' });
-});
+// === Crée la table admin_log si elle n’existe pas ===
+const createLogTable = `
+  CREATE TABLE IF NOT EXISTS admin_log (
+    id SERIAL PRIMARY KEY,
+    action TEXT,
+    game TEXT,
+    timestamp BIGINT,
+    admin_name TEXT DEFAULT 'admin'
+  );
+`;
+client.query(createLogTable)
+  .then(() => console.log('✅ Table admin_log prête'))
+  .catch(err => console.error('❌ Erreur création table admin_log:', err));
 
 // === Route: Submit Score for Roninoid ===
 app.post('/submit-score-roninoid', async (req, res) => {
@@ -146,12 +155,57 @@ app.post('/admin/reset-roninoid', async (req, res) => {
     return res.status(401).json({ success: false, error: "Invalid password" });
   }
 
+  const now = Date.now();
+
   try {
+    await client.query('BEGIN');
+
+    // Supprime les scores
     await client.query('DELETE FROM roninoid_scores WHERE game = $1', ['roninoid']);
-    console.log('✅ [ADMIN] Scores Roninoid réinitialisés');
-    return res.json({ success: true, message: 'Scores reset successfully' });
+
+    // Enregistre l'action
+    await client.query(
+      'INSERT INTO admin_log (action, game, timestamp) VALUES ($1, $2, $3)',
+      ['reset', 'roninoid', now]
+    );
+
+    await client.query('COMMIT');
+
+    console.log('✅ [ADMIN] Roninoid scores reset at', new Date(now).toISOString());
+    return res.json({ success: true, message: 'Scores reset successfully', resetAt: now });
   } catch (err) {
-    console.error('❌ [ADMIN] Échec de réinitialisation:', err);
+    await client.query('ROLLBACK');
+    console.error('❌ [ADMIN] Failed to reset:', err);
+    return res.status(500).json({ success: false, error: 'Server error' });
+  }
+});
+
+// === Route: Get last reset info for a game ===
+app.get('/admin/reset-info/:game', async (req, res) => {
+  const { game } = req.params;
+
+  try {
+    const result = await client.query(
+      'SELECT timestamp FROM admin_log WHERE game = $1 AND action = $2 ORDER BY timestamp DESC LIMIT 1',
+      [game, 'reset']
+    );
+
+    if (result.rows.length > 0) {
+      const lastReset = new Date(result.rows[0].timestamp).toLocaleString('en-US', {
+        timeZone: 'UTC',
+        year: 'numeric',
+        month: 'short',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+      return res.json({ success: true, resetAt: result.rows[0].timestamp, formatted: lastReset });
+    } else {
+      return res.json({ success: true, resetAt: null, formatted: 'Never reset' });
+    }
+  } catch (err) {
+    console.error('Error fetching reset info:', err);
     return res.status(500).json({ success: false, error: 'Server error' });
   }
 });
