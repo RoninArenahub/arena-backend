@@ -1,5 +1,5 @@
-// server.js — ArenaHub Backend with PostgreSQL
-// Sauvegarde persistante des scores pour Roninoid
+// server.js — ArenaHub Backend
+// Affiche nom + adresse seulement pour les wallets
 
 console.log("🚀 Démarrage du serveur...");
 
@@ -14,9 +14,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', 'https://roninarenahub.netlify.app');
   res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
   res.header('Access-Control-Allow-Headers', 'Content-Type');
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
   next();
 });
 
@@ -26,18 +24,15 @@ app.use(express.json());
 const client = new Client({
   connectionString: process.env.DATABASE_URL || 'postgresql://arena_db_22gu_user:tuwcyo7kaqzyiPSojGXt1r1ieO5rtyDU@dpg-d2g12hndiees73cucvfg-a.singapore-postgres.render.com/arena_db_22gu',
   ssl: {
-    rejectUnauthorized: false // Obligatoire pour Render
+    rejectUnauthorized: false
   }
 });
 
-// === Tente de se connecter (non bloquant) ===
 client.connect()
   .then(() => console.log('✅ Connecté à PostgreSQL'))
-  .catch(err => {
-    console.error('⚠️ Échec de connexion à la base de données (non bloquant):', err.message);
-  });
+  .catch(err => console.error('⚠️ Échec de connexion (non bloquant):', err.message));
 
-// === Crée la table si elle n’existe pas ===
+// === Crée la table ===
 const createTableQuery = `
   CREATE TABLE IF NOT EXISTS roninoid_scores (
     id SERIAL PRIMARY KEY,
@@ -49,7 +44,6 @@ const createTableQuery = `
     timestamp BIGINT
   );
 `;
-
 client.query(createTableQuery)
   .then(() => console.log('✅ Table roninoid_scores prête'))
   .catch(err => console.error('❌ Erreur création table:', err));
@@ -63,12 +57,11 @@ app.get('/', (req, res) => {
 app.post('/submit-score-roninoid', async (req, res) => {
   const { address, signature, playerName, score, timestamp } = req.body;
 
-  // Validation de base
   if (typeof score !== 'number' || score < 0) {
     return res.status(400).json({ success: false, error: "Invalid score" });
   }
 
-  // === Mode Wallet (avec signature) ===
+  // === Mode Wallet ===
   if (address && signature && timestamp) {
     try {
       const message = `Submit score: ${score} at ${timestamp}`;
@@ -85,7 +78,6 @@ app.post('/submit-score-roninoid', async (req, res) => {
       `;
       await client.query(query, [nameToSave, address, score, timestamp]);
 
-      // Calcule le classement
       const rankQuery = `
         SELECT rank FROM (
           SELECT address, RANK() OVER (ORDER BY score DESC) as rank
@@ -102,7 +94,7 @@ app.post('/submit-score-roninoid', async (req, res) => {
     }
   }
 
-  // === Mode Guest (seulement playerName) ===
+  // === Mode Guest ===
   if (!address && playerName && score !== undefined) {
     const nameToSave = (playerName && playerName.trim()) ? playerName.trim() : 'Anonymous';
 
@@ -131,8 +123,8 @@ app.get('/leaderboard/roninoid', async (req, res) => {
     const leaderboard = result.rows.map((row, i) => ({
       rank: i + 1,
       name: row.player_name || 'Anonymous',
-      score: row.score,
-      address: row.address ? `${row.address.slice(0,6)}...${row.address.slice(-4)}` : null
+      address: row.address ? `${row.address.slice(0,6)}...${row.address.slice(-4)}` : null,
+      score: row.score
     }));
 
     res.json({ success: true, leaderboard });
